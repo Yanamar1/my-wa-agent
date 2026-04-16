@@ -5,9 +5,11 @@ Stores message history per phone number for multi-turn conversations.
 
 import sqlite3
 import os
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 from config import settings
+
+# Israel timezone (UTC+3 in summer, UTC+2 in winter - using +3 as approximation)
+_ISRAEL_OFFSET = timezone(timedelta(hours=3))
 
 
 def _get_db_path() -> str:
@@ -84,7 +86,7 @@ def save_reminder(phone: str, message: str, remind_at: str) -> int:
 
 def get_pending_reminders() -> list[dict]:
     """Get all reminders that are due and not yet sent."""
-    now_israel = datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%dT%H:%M:%S")
+    now_israel = datetime.now(_ISRAEL_OFFSET).strftime("%Y-%m-%dT%H:%M:%S")
     conn = _connect()
     cursor = conn.execute(
         "SELECT id, phone, message FROM reminders WHERE sent = 0 AND remind_at <= ?",

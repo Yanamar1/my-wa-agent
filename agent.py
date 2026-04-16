@@ -6,8 +6,7 @@ Uses Claude tool_use for Google Calendar actions.
 
 import json
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from anthropic import Anthropic
 
@@ -168,7 +167,7 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
     messages = list(history)
     messages.append({"role": "user", "content": message})
 
-    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    now = datetime.now(timezone(timedelta(hours=3)))
     system_prompt = settings.SYSTEM_PROMPT + f"\n\nהזמן הנוכחי: {now.strftime('%Y-%m-%d %H:%M')} (שעון ישראל)"
 
     response = client.messages.create(
