@@ -6,11 +6,13 @@ Uses Claude tool_use for Google Calendar actions.
 
 import json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from anthropic import Anthropic
 
 from config import settings
-from database import get_history, save_message
+from database import get_history, save_message, save_reminder, get_reminders_for_phone, delete_reminder
 from calendar_api import create_event, list_events, delete_event
 
 logger = logging.getLogger("עוזר")
@@ -71,6 +73,46 @@ TOOLS = [
             "required": ["event_id"],
         },
     },
+    {
+        "name": "create_reminder",
+        "description": "יוצר תזכורת שתישלח למשתמש בווצאפ בזמן המבוקש. השתמש כשהמשתמש אומר 'תזכיר לי', 'תזכורת', או מבקש שתזכיר לו משהו.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "תוכן התזכורת שתישלח למשתמש",
+                },
+                "remind_at": {
+                    "type": "string",
+                    "description": "מתי לשלוח את התזכורת בפורמט ISO, למשל: 2026-04-16T14:00:00. התאריך והשעה בזמן ישראל.",
+                },
+            },
+            "required": ["message", "remind_at"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "מציג את התזכורות הפעילות של המשתמש. השתמש כשהמשתמש שואל מה התזכורות שלו.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "delete_reminder",
+        "description": "מוחק תזכורת לפי מזהה. השתמש כשהמשתמש מבקש לבטל תזכורת.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reminder_id": {
+                    "type": "integer",
+                    "description": "מזהה התזכורת למחיקה",
+                },
+            },
+            "required": ["reminder_id"],
+        },
+    },
 ]
 
 
@@ -95,6 +137,22 @@ def _handle_tool_call(tool_name: str, tool_input: dict) -> str:
             delete_event(tool_input["event_id"])
             return json.dumps({"success": True, "message": "האירוע נמחק"}, ensure_ascii=False)
 
+        elif tool_name == "create_reminder":
+            reminder_id = save_reminder(
+                phone=tool_input.get("_phone", ""),
+                message=tool_input["message"],
+                remind_at=tool_input["remind_at"],
+            )
+            return json.dumps({"success": True, "reminder_id": reminder_id, "message": "התזכורת נוצרה"}, ensure_ascii=False)
+
+        elif tool_name == "list_reminders":
+            reminders = get_reminders_for_phone(tool_input.get("_phone", ""))
+            return json.dumps(reminders, ensure_ascii=False)
+
+        elif tool_name == "delete_reminder":
+            delete_reminder(tool_input["reminder_id"])
+            return json.dumps({"success": True, "message": "התזכורת נמחקה"}, ensure_ascii=False)
+
         else:
             return json.dumps({"error": f"כלי לא מוכר: {tool_name}"}, ensure_ascii=False)
 
@@ -110,10 +168,13 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
     messages = list(history)
     messages.append({"role": "user", "content": message})
 
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    system_prompt = settings.SYSTEM_PROMPT + f"\n\nהזמן הנוכחי: {now.strftime('%Y-%m-%d %H:%M')} (שעון ישראל)"
+
     response = client.messages.create(
         model=settings.LLM_MODEL,
         max_tokens=1024,
-        system=settings.SYSTEM_PROMPT,
+        system=system_prompt,
         messages=messages,
         tools=TOOLS,
     )
@@ -129,6 +190,9 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
         tool_results = []
         for tool_block in tool_blocks:
             logger.info(f"Tool call: {tool_block.name}({tool_block.input})")
+            # Inject phone number for reminder tools
+            if tool_block.name in ("create_reminder", "list_reminders"):
+                tool_block.input["_phone"] = phone
             result = _handle_tool_call(tool_block.name, tool_block.input)
             tool_results.append({
                 "type": "tool_result",
@@ -142,7 +206,7 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
         response = client.messages.create(
             model=settings.LLM_MODEL,
             max_tokens=1024,
-            system=settings.SYSTEM_PROMPT,
+            system=system_prompt,
             messages=messages,
             tools=TOOLS,
         )

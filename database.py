@@ -38,6 +38,20 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_messages_phone
         ON messages(phone, timestamp DESC)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL,
+            message TEXT NOT NULL,
+            remind_at DATETIME NOT NULL,
+            sent INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_reminders_pending
+        ON reminders(sent, remind_at)
+    """)
     conn.commit()
     conn.close()
 
@@ -51,6 +65,59 @@ def save_message(phone: str, role: str, content: str):
     )
     conn.commit()
     conn.close()
+
+
+def save_reminder(phone: str, message: str, remind_at: str) -> int:
+    """Save a reminder. remind_at in ISO format: 2026-04-16T14:00:00."""
+    conn = _connect()
+    cursor = conn.execute(
+        "INSERT INTO reminders (phone, message, remind_at) VALUES (?, ?, ?)",
+        (phone, message, remind_at),
+    )
+    reminder_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return reminder_id
+
+
+def get_pending_reminders() -> list[dict]:
+    """Get all reminders that are due and not yet sent."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT id, phone, message FROM reminders WHERE sent = 0 AND remind_at <= datetime('now')"
+    )
+    reminders = [{"id": row[0], "phone": row[1], "message": row[2]} for row in cursor.fetchall()]
+    conn.close()
+    return reminders
+
+
+def mark_reminder_sent(reminder_id: int):
+    """Mark a reminder as sent."""
+    conn = _connect()
+    conn.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_reminders_for_phone(phone: str) -> list[dict]:
+    """Get pending reminders for a phone number."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT id, message, remind_at FROM reminders WHERE phone = ? AND sent = 0 ORDER BY remind_at",
+        (phone,),
+    )
+    reminders = [{"id": row[0], "message": row[1], "remind_at": row[2]} for row in cursor.fetchall()]
+    conn.close()
+    return reminders
+
+
+def delete_reminder(reminder_id: int) -> bool:
+    """Delete a reminder by ID."""
+    conn = _connect()
+    conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+    return True
 
 
 def get_history(phone: str, limit: int = 20) -> list[dict]:

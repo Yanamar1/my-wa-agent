@@ -3,7 +3,7 @@
 Webhook server that receives messages from Green API and responds using AI.
 """
 
-import hashlib
+import asyncio
 import time
 import logging
 from contextlib import asynccontextmanager
@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from agent import get_response
-from database import init_db
+from database import init_db, get_pending_reminders, mark_reminder_sent
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -33,11 +33,32 @@ def _cleanup_seen():
         del _seen_messages[k]
 
 
+async def _reminder_loop():
+    """Background loop that checks for due reminders every 30 seconds."""
+    while True:
+        try:
+            reminders = get_pending_reminders()
+            for reminder in reminders:
+                chat_id = f"{reminder['phone']}@c.us"
+                message = f"⏰ תזכורת: {reminder['message']}"
+                try:
+                    await send_whatsapp_message(chat_id, message)
+                    mark_reminder_sent(reminder["id"])
+                    logger.info(f"Reminder sent to {reminder['phone']}: {reminder['message'][:50]}")
+                except Exception as e:
+                    logger.error(f"Failed to send reminder {reminder['id']}: {e}")
+        except Exception as e:
+            logger.error(f"Reminder loop error: {e}")
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    logger.info("עוזר is ready")
+    task = asyncio.create_task(_reminder_loop())
+    logger.info("עוזר is ready (with reminders)")
     yield
+    task.cancel()
 
 
 app = FastAPI(title="עוזר", lifespan=lifespan)
