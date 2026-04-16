@@ -116,7 +116,7 @@ TOOLS = [
 ]
 
 
-def _handle_tool_call(tool_name: str, tool_input: dict) -> str:
+def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
     """מפעיל כלי ומחזיר תוצאה."""
     try:
         if tool_name == "create_calendar_event":
@@ -139,14 +139,14 @@ def _handle_tool_call(tool_name: str, tool_input: dict) -> str:
 
         elif tool_name == "create_reminder":
             reminder_id = save_reminder(
-                phone=tool_input.get("_phone", ""),
+                phone=phone,
                 message=tool_input["message"],
                 remind_at=tool_input["remind_at"],
             )
             return json.dumps({"success": True, "reminder_id": reminder_id, "message": "התזכורת נוצרה"}, ensure_ascii=False)
 
         elif tool_name == "list_reminders":
-            reminders = get_reminders_for_phone(tool_input.get("_phone", ""))
+            reminders = get_reminders_for_phone(phone)
             return json.dumps(reminders, ensure_ascii=False)
 
         elif tool_name == "delete_reminder":
@@ -190,10 +190,7 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
         tool_results = []
         for tool_block in tool_blocks:
             logger.info(f"Tool call: {tool_block.name}({tool_block.input})")
-            # Inject phone number for reminder tools
-            if tool_block.name in ("create_reminder", "list_reminders"):
-                tool_block.input["_phone"] = phone
-            result = _handle_tool_call(tool_block.name, tool_block.input)
+            result = _handle_tool_call(tool_block.name, tool_block.input, phone=phone)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_block.id,
