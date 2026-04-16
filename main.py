@@ -48,6 +48,17 @@ async def health():
     return {"status": "ok", "agent": "עוזר"}
 
 
+@app.post("/clear-history")
+async def clear_history():
+    """Clear all conversation history to reset the agent."""
+    from database import _connect
+    conn = _connect()
+    conn.execute("DELETE FROM messages")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "message": "history cleared"}
+
+
 @app.post("/webhook/green-api")
 async def webhook(request: Request):
     """Handle incoming messages from Green API."""
