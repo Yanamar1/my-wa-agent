@@ -15,13 +15,13 @@ services:
         sync: false
       - key: LLM_MODEL
         value: claude-sonnet-4-6
-      - key: SYSTEM_PROMPT
-        value: "אתה עוזר - עוזר אישי חכם ואמין ב-WhatsApp. אתה מדבר בעברית בסגנון חברי אבל מקצועי. אתה עוזר עם ניהול יומן, תזכורות, זיכרון דברים, ניסוח הודעות וסיכומים. אתה תמציתי ולא מאריך שלא לצורך."
       - key: MAX_HISTORY
         value: "20"
       - key: DATABASE_PATH
-        value: /data/conversations.db
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
+        value: ./conversations.db
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false

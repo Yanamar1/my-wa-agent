@@ -5,13 +5,9 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-
-load_dotenv(Path(__file__).parent / ".env", override=True)
 
 logger = logging.getLogger("עוזר")
 
