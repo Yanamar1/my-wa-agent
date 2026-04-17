@@ -95,22 +95,34 @@ async def webhook(request: Request):
 
     message_data = data.get("messageData", {})
     message_type = message_data.get("typeMessage")
-    if message_type != "textMessage":
+    # Accept text and image messages
+    if message_type not in ("textMessage", "extendedTextMessage", "imageMessage"):
         return {"ok": True, "skipped": message_type}
 
     # Extract sender and message
     sender_data = data.get("senderData", {})
     chat_id = sender_data.get("chatId", "")
     sender_name = sender_data.get("senderName", "")
-    text = message_data.get("textMessageData", {}).get("textMessage", "")
     message_id = data.get("idMessage", "")
+
+    # Extract text and image based on message type
+    text = ""
+    image_url = None
+    if message_type == "textMessage":
+        text = message_data.get("textMessageData", {}).get("textMessage", "")
+    elif message_type == "extendedTextMessage":
+        text = message_data.get("extendedTextMessageData", {}).get("text", "")
+    elif message_type == "imageMessage":
+        file_data = message_data.get("fileMessageData", {})
+        image_url = file_data.get("downloadUrl")
+        text = file_data.get("caption", "") or "מה אתה רואה בתמונה?"
 
     # Skip group messages (only respond to direct messages)
     if "@g.us" in chat_id:
         return {"ok": True, "skipped": "group_message"}
 
-    # Skip empty messages
-    if not text.strip():
+    # Skip empty messages (no text and no image)
+    if not text.strip() and not image_url:
         return {"ok": True, "skipped": "empty"}
 
     # Deduplication
@@ -122,11 +134,11 @@ async def webhook(request: Request):
     # Extract phone number from chat_id (remove @c.us)
     phone = chat_id.replace("@c.us", "")
 
-    logger.info(f"Message from {sender_name} ({phone}): {text[:50]}...")
+    logger.info(f"Message from {sender_name} ({phone}): {text[:50]}... (image={bool(image_url)})")
 
     # Get AI response
     try:
-        reply = get_response(phone, text, sender_name)
+        reply = get_response(phone, text, sender_name, image_url=image_url)
     except Exception as e:
         logger.error(f"Agent error: {e}")
         reply = "סליחה, משהו השתבש. נסה שוב בעוד רגע."

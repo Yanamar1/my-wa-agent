@@ -4,10 +4,12 @@ Handles message processing, conversation history, and LLM calls.
 Uses Claude tool_use for Google Calendar actions.
 """
 
+import base64
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from anthropic import Anthropic
 
 from config import settings
@@ -203,12 +205,44 @@ def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-def get_response(phone: str, message: str, sender_name: str = "") -> str:
+def _download_image(url: str) -> tuple[str, str]:
+    """Download image from URL and return (base64_data, media_type)."""
+    response = httpx.get(url, timeout=30)
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+    if content_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+        content_type = "image/jpeg"
+    data = base64.standard_b64encode(response.content).decode("utf-8")
+    return data, content_type
+
+
+def get_response(phone: str, message: str, sender_name: str = "", image_url: str = None) -> str:
     """Process a message and return an AI response."""
 
     history = get_history(phone, limit=settings.MAX_HISTORY)
     messages = list(history)
-    messages.append({"role": "user", "content": message})
+
+    # Build user message content - text or image+text
+    if image_url:
+        try:
+            image_data, media_type = _download_image(image_url)
+            user_content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_data,
+                    },
+                },
+                {"type": "text", "text": message},
+            ]
+            messages.append({"role": "user", "content": user_content})
+        except Exception as e:
+            logger.error(f"Failed to download image: {e}")
+            messages.append({"role": "user", "content": f"{message}\n(לא הצלחתי להוריד את התמונה)"})
+    else:
+        messages.append({"role": "user", "content": message})
 
     now = datetime.now(timezone(timedelta(hours=3)))
     system_prompt = settings.SYSTEM_PROMPT + f"\n\nהזמן הנוכחי: {now.strftime('%Y-%m-%d %H:%M')} (שעון ישראל)"
@@ -260,7 +294,11 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
     text_blocks = [b for b in response.content if hasattr(b, "text")]
     reply = text_blocks[0].text if text_blocks else "בוצע!"
 
-    save_message(phone, "user", message)
+    # Save user message (with marker if it was an image)
+    saved_message = message
+    if image_url:
+        saved_message = f"[תמונה] {message}"
+    save_message(phone, "user", saved_message)
     save_message(phone, "assistant", reply)
 
     return reply
