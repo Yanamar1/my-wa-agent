@@ -11,7 +11,10 @@ from datetime import datetime, timedelta, timezone
 from anthropic import Anthropic
 
 from config import settings
-from database import get_history, save_message, save_reminder, get_reminders_for_phone, delete_reminder
+from database import (
+    get_history, save_message, save_reminder, get_reminders_for_phone,
+    delete_reminder, save_fact, get_facts, delete_fact,
+)
 from calendar_api import create_event, list_events, delete_event
 
 logger = logging.getLogger("עוזר")
@@ -112,6 +115,38 @@ TOOLS = [
             "required": ["reminder_id"],
         },
     },
+    {
+        "name": "remember_fact",
+        "description": "שומר מידע קבוע על המשתמש לזיכרון ארוך טווח. השתמש כשהמשתמש מספר עליו משהו שכדאי לזכור (שם, מגדר, העדפות, אנשים חשובים לו, מקום עבודה, דברים שהוא אוהב וכו'). דוגמאות למפתחות: 'שם', 'מגדר', 'אשתי', 'עבודה', 'תחביב'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "שם הפרט/נושא, למשל: 'שם', 'מגדר המשתמש', 'המגדר שלי (הסוכן)', 'אשתי', 'ילדים', 'עבודה'",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "התוכן עצמו, למשל: 'יאן', 'זכר', 'נקבה', 'דנה', 'פרסום דיגיטלי'",
+                },
+            },
+            "required": ["key", "value"],
+        },
+    },
+    {
+        "name": "forget_fact",
+        "description": "מוחק עובדה מהזיכרון. השתמש כשהמשתמש אומר לך לשכוח משהו.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "שם העובדה למחיקה",
+                },
+            },
+            "required": ["key"],
+        },
+    },
 ]
 
 
@@ -152,6 +187,14 @@ def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
             delete_reminder(tool_input["reminder_id"])
             return json.dumps({"success": True, "message": "התזכורת נמחקה"}, ensure_ascii=False)
 
+        elif tool_name == "remember_fact":
+            save_fact(phone, tool_input["key"], tool_input["value"])
+            return json.dumps({"success": True, "message": f"נשמר: {tool_input['key']} = {tool_input['value']}"}, ensure_ascii=False)
+
+        elif tool_name == "forget_fact":
+            delete_fact(phone, tool_input["key"])
+            return json.dumps({"success": True, "message": "נמחק"}, ensure_ascii=False)
+
         else:
             return json.dumps({"error": f"כלי לא מוכר: {tool_name}"}, ensure_ascii=False)
 
@@ -169,6 +212,12 @@ def get_response(phone: str, message: str, sender_name: str = "") -> str:
 
     now = datetime.now(timezone(timedelta(hours=3)))
     system_prompt = settings.SYSTEM_PROMPT + f"\n\nהזמן הנוכחי: {now.strftime('%Y-%m-%d %H:%M')} (שעון ישראל)"
+
+    # Inject persistent facts about the user
+    facts = get_facts(phone)
+    if facts:
+        facts_text = "\n".join([f"- {k}: {v}" for k, v in facts.items()])
+        system_prompt += f"\n\nמה שאתה יודע על המשתמש (זיכרון ארוך טווח):\n{facts_text}"
 
     response = client.messages.create(
         model=settings.LLM_MODEL,

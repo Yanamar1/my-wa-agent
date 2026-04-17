@@ -56,6 +56,16 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_reminders_pending
         ON reminders(sent, remind_at)
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(phone, key)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -121,6 +131,43 @@ def delete_reminder(reminder_id: int) -> bool:
     """Delete a reminder by ID."""
     conn = _connect()
     conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def save_fact(phone: str, key: str, value: str):
+    """Save or update a fact about the user."""
+    conn = _connect()
+    conn.execute(
+        """
+        INSERT INTO facts (phone, key, value) VALUES (?, ?, ?)
+        ON CONFLICT(phone, key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (phone, key, value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_facts(phone: str) -> dict:
+    """Get all facts about the user as a dictionary."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT key, value FROM facts WHERE phone = ? ORDER BY updated_at",
+        (phone,),
+    )
+    facts = {row[0]: row[1] for row in cursor.fetchall()}
+    conn.close()
+    return facts
+
+
+def delete_fact(phone: str, key: str) -> bool:
+    """Delete a specific fact."""
+    conn = _connect()
+    conn.execute("DELETE FROM facts WHERE phone = ? AND key = ?", (phone, key))
     conn.commit()
     conn.close()
     return True
