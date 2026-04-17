@@ -16,6 +16,7 @@ from config import settings
 from database import (
     get_history, save_message, save_reminder, get_reminders_for_phone,
     delete_reminder, save_fact, get_facts, delete_fact,
+    add_todo, list_todos, complete_todo, delete_todo,
 )
 from calendar_api import create_event, list_events, delete_event
 
@@ -149,6 +150,56 @@ TOOLS = [
             "required": ["key"],
         },
     },
+    {
+        "name": "add_todo",
+        "description": "מוסיף משימה לרשימת המשימות של המשתמש - דברים שצריך לעשות בלי זמן מוגדר. דוגמאות: 'למלא גז במזגן', 'לקנות מתנה לאמא', 'להחזיר ספר לספריה'. לא להשתמש בכלי הזה אם יש זמן ספציפי - בזה השתמש ב-create_reminder.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "תוכן המשימה",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "list_todos",
+        "description": "מחזיר את כל המשימות הפתוחות של המשתמש (דברים שצריך לעשות). השתמש בזה כשהמשתמש שואל מה יש לו לעשות, מה המשימות שלו, או מבקש סיכום של דברים לעשות.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "complete_todo",
+        "description": "מסמן משימה כהושלמה. השתמש כשהמשתמש אומר שסיים/ביצע/עשה משימה.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "todo_id": {
+                    "type": "integer",
+                    "description": "מזהה המשימה",
+                },
+            },
+            "required": ["todo_id"],
+        },
+    },
+    {
+        "name": "delete_todo",
+        "description": "מוחק משימה לגמרי. השתמש כשהמשתמש מבקש למחוק/לבטל משימה.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "todo_id": {
+                    "type": "integer",
+                    "description": "מזהה המשימה",
+                },
+            },
+            "required": ["todo_id"],
+        },
+    },
 ]
 
 
@@ -196,6 +247,22 @@ def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
         elif tool_name == "forget_fact":
             delete_fact(phone, tool_input["key"])
             return json.dumps({"success": True, "message": "נמחק"}, ensure_ascii=False)
+
+        elif tool_name == "add_todo":
+            todo_id = add_todo(phone, tool_input["content"])
+            return json.dumps({"success": True, "todo_id": todo_id, "message": "המשימה נוספה"}, ensure_ascii=False)
+
+        elif tool_name == "list_todos":
+            todos = list_todos(phone)
+            return json.dumps(todos, ensure_ascii=False)
+
+        elif tool_name == "complete_todo":
+            complete_todo(tool_input["todo_id"])
+            return json.dumps({"success": True, "message": "המשימה סומנה כהושלמה"}, ensure_ascii=False)
+
+        elif tool_name == "delete_todo":
+            delete_todo(tool_input["todo_id"])
+            return json.dumps({"success": True, "message": "המשימה נמחקה"}, ensure_ascii=False)
 
         else:
             return json.dumps({"error": f"כלי לא מוכר: {tool_name}"}, ensure_ascii=False)

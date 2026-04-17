@@ -66,6 +66,15 @@ def init_db():
             UNIQUE(phone, key)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL,
+            content TEXT NOT NULL,
+            done INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -168,6 +177,55 @@ def delete_fact(phone: str, key: str) -> bool:
     """Delete a specific fact."""
     conn = _connect()
     conn.execute("DELETE FROM facts WHERE phone = ? AND key = ?", (phone, key))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def add_todo(phone: str, content: str) -> int:
+    """Add a todo item (task without specific time)."""
+    conn = _connect()
+    cursor = conn.execute(
+        "INSERT INTO todos (phone, content) VALUES (?, ?)",
+        (phone, content),
+    )
+    todo_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return todo_id
+
+
+def list_todos(phone: str, include_done: bool = False) -> list[dict]:
+    """Get todos for a phone."""
+    conn = _connect()
+    if include_done:
+        cursor = conn.execute(
+            "SELECT id, content, done FROM todos WHERE phone = ? ORDER BY done, created_at",
+            (phone,),
+        )
+    else:
+        cursor = conn.execute(
+            "SELECT id, content, done FROM todos WHERE phone = ? AND done = 0 ORDER BY created_at",
+            (phone,),
+        )
+    todos = [{"id": row[0], "content": row[1], "done": bool(row[2])} for row in cursor.fetchall()]
+    conn.close()
+    return todos
+
+
+def complete_todo(todo_id: int) -> bool:
+    """Mark a todo as done."""
+    conn = _connect()
+    conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (todo_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_todo(todo_id: int) -> bool:
+    """Delete a todo."""
+    conn = _connect()
+    conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
     conn.commit()
     conn.close()
     return True
