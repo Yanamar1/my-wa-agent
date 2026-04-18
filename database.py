@@ -49,9 +49,15 @@ def init_db():
             message TEXT NOT NULL,
             remind_at DATETIME NOT NULL,
             sent INTEGER DEFAULT 0,
+            recurrence TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Add recurrence column for existing databases (migration)
+    try:
+        conn.execute("ALTER TABLE reminders ADD COLUMN recurrence TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_reminders_pending
         ON reminders(sent, remind_at)
@@ -90,12 +96,13 @@ def save_message(phone: str, role: str, content: str):
     conn.close()
 
 
-def save_reminder(phone: str, message: str, remind_at: str) -> int:
-    """Save a reminder. remind_at in ISO format: 2026-04-16T14:00:00."""
+def save_reminder(phone: str, message: str, remind_at: str, recurrence: str = None) -> int:
+    """Save a reminder. remind_at in ISO format: 2026-04-16T14:00:00.
+    recurrence: None, 'daily', 'weekly', or 'monthly'."""
     conn = _connect()
     cursor = conn.execute(
-        "INSERT INTO reminders (phone, message, remind_at) VALUES (?, ?, ?)",
-        (phone, message, remind_at),
+        "INSERT INTO reminders (phone, message, remind_at, recurrence) VALUES (?, ?, ?, ?)",
+        (phone, message, remind_at, recurrence),
     )
     reminder_id = cursor.lastrowid
     conn.commit()
@@ -108,18 +115,58 @@ def get_pending_reminders() -> list[dict]:
     now_israel = datetime.now(_ISRAEL_OFFSET).strftime("%Y-%m-%dT%H:%M:%S")
     conn = _connect()
     cursor = conn.execute(
-        "SELECT id, phone, message FROM reminders WHERE sent = 0 AND remind_at <= ?",
+        "SELECT id, phone, message, recurrence, remind_at FROM reminders WHERE sent = 0 AND remind_at <= ?",
         (now_israel,),
     )
-    reminders = [{"id": row[0], "phone": row[1], "message": row[2]} for row in cursor.fetchall()]
+    reminders = [
+        {"id": row[0], "phone": row[1], "message": row[2], "recurrence": row[3], "remind_at": row[4]}
+        for row in cursor.fetchall()
+    ]
     conn.close()
     return reminders
 
 
+def _next_occurrence(remind_at: str, recurrence: str) -> str:
+    """Calculate next occurrence for a recurring reminder."""
+    # Parse the current time
+    dt = datetime.strptime(remind_at, "%Y-%m-%dT%H:%M:%S")
+    if recurrence == "daily":
+        dt = dt + timedelta(days=1)
+    elif recurrence == "weekly":
+        dt = dt + timedelta(days=7)
+    elif recurrence == "monthly":
+        # Add one month (approximate with 30 days to keep simple)
+        # Better: increment month, handle rollover
+        month = dt.month + 1
+        year = dt.year
+        if month > 12:
+            month = 1
+            year += 1
+        try:
+            dt = dt.replace(year=year, month=month)
+        except ValueError:
+            # Day doesn't exist in target month (e.g., Feb 30)
+            dt = dt.replace(year=year, month=month, day=28)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def mark_reminder_sent(reminder_id: int):
-    """Mark a reminder as sent."""
+    """Mark a reminder as sent. If it's recurring, reschedule instead."""
     conn = _connect()
-    conn.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
+    cursor = conn.execute(
+        "SELECT recurrence, remind_at FROM reminders WHERE id = ?",
+        (reminder_id,),
+    )
+    row = cursor.fetchone()
+    if row and row[0]:  # Has recurrence
+        recurrence, remind_at = row[0], row[1]
+        next_time = _next_occurrence(remind_at, recurrence)
+        conn.execute(
+            "UPDATE reminders SET remind_at = ? WHERE id = ?",
+            (next_time, reminder_id),
+        )
+    else:
+        conn.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
     conn.commit()
     conn.close()
 
@@ -128,10 +175,13 @@ def get_reminders_for_phone(phone: str) -> list[dict]:
     """Get pending reminders for a phone number."""
     conn = _connect()
     cursor = conn.execute(
-        "SELECT id, message, remind_at FROM reminders WHERE phone = ? AND sent = 0 ORDER BY remind_at",
+        "SELECT id, message, remind_at, recurrence FROM reminders WHERE phone = ? AND sent = 0 ORDER BY remind_at",
         (phone,),
     )
-    reminders = [{"id": row[0], "message": row[1], "remind_at": row[2]} for row in cursor.fetchall()]
+    reminders = [
+        {"id": row[0], "message": row[1], "remind_at": row[2], "recurrence": row[3]}
+        for row in cursor.fetchall()
+    ]
     conn.close()
     return reminders
 

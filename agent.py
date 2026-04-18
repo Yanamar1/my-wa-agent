@@ -80,7 +80,7 @@ TOOLS = [
     },
     {
         "name": "create_reminder",
-        "description": "יוצר תזכורת שתישלח למשתמש בווצאפ בזמן המבוקש. השתמש כשהמשתמש אומר 'תזכיר לי', 'תזכורת', או מבקש שתזכיר לו משהו.",
+        "description": "יוצר תזכורת שתישלח למשתמש בווצאפ בזמן המבוקש. השתמש כשהמשתמש אומר 'תזכיר לי', 'תזכורת', או מבקש שתזכיר לו משהו. תומך בתזכורות חוזרות - כל יום / כל שבוע / כל חודש.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -90,7 +90,12 @@ TOOLS = [
                 },
                 "remind_at": {
                     "type": "string",
-                    "description": "מתי לשלוח את התזכורת בפורמט ISO, למשל: 2026-04-16T14:00:00. התאריך והשעה בזמן ישראל.",
+                    "description": "מתי לשלוח את התזכורת בפורמט ISO, למשל: 2026-04-16T14:00:00. התאריך והשעה בזמן ישראל. אם זו תזכורת חוזרת - זה הזמן של ההופעה הראשונה.",
+                },
+                "recurrence": {
+                    "type": "string",
+                    "enum": ["daily", "weekly", "monthly"],
+                    "description": "אם התזכורת צריכה לחזור - ציין daily (כל יום), weekly (כל שבוע באותו יום ושעה), או monthly (כל חודש). אל תציין אם זו תזכורת חד פעמית. דוגמה: 'כל שבת ב-9 בבוקר' => weekly + remind_at של השבת הקרובה ב-9:00",
                 },
             },
             "required": ["message", "remind_at"],
@@ -229,6 +234,7 @@ def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
                 phone=phone,
                 message=tool_input["message"],
                 remind_at=tool_input["remind_at"],
+                recurrence=tool_input.get("recurrence"),
             )
             return json.dumps({"success": True, "reminder_id": reminder_id, "message": "התזכורת נוצרה"}, ensure_ascii=False)
 
