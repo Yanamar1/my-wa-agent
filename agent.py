@@ -17,6 +17,7 @@ from database import (
     get_history, save_message, save_reminder, get_reminders_for_phone,
     delete_reminder, save_fact, get_facts, delete_fact,
     add_todo, list_todos, complete_todo, delete_todo,
+    get_user_settings, update_user_settings,
 )
 from calendar_api import create_event, list_events, delete_event
 
@@ -205,6 +206,31 @@ TOOLS = [
             "required": ["todo_id"],
         },
     },
+    {
+        "name": "configure_notifications",
+        "description": "מגדיר את ההתראות האוטומטיות לפני אירועים ביומן. השתמש כשהמשתמש רוצה להדליק/לכבות התראות, או לשנות כמה דקות לפני אירוע לקבל התראה.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "minutes_before": {
+                    "type": "integer",
+                    "description": "כמה דקות לפני אירוע לשלוח התראה (למשל 10 = עשר דקות לפני)",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "true להדליק, false לכבות",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_notification_settings",
+        "description": "מחזיר את ההגדרות הנוכחיות של ההתראות לפני אירועים.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -269,6 +295,23 @@ def _handle_tool_call(tool_name: str, tool_input: dict, phone: str = "") -> str:
         elif tool_name == "delete_todo":
             delete_todo(tool_input["todo_id"])
             return json.dumps({"success": True, "message": "המשימה נמחקה"}, ensure_ascii=False)
+
+        elif tool_name == "configure_notifications":
+            update_user_settings(
+                phone,
+                notify_minutes_before=tool_input.get("minutes_before"),
+                notifications_enabled=tool_input.get("enabled"),
+            )
+            current = get_user_settings(phone)
+            return json.dumps({
+                "success": True,
+                "settings": current,
+                "message": f"הגדרות נשמרו. התראות {'דלוקות' if current['notifications_enabled'] else 'כבויות'}, {current['notify_minutes_before']} דקות לפני אירוע"
+            }, ensure_ascii=False)
+
+        elif tool_name == "get_notification_settings":
+            settings_data = get_user_settings(phone)
+            return json.dumps(settings_data, ensure_ascii=False)
 
         else:
             return json.dumps({"error": f"כלי לא מוכר: {tool_name}"}, ensure_ascii=False)

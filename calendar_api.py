@@ -93,3 +93,34 @@ def delete_event(event_id: str) -> bool:
     service = _get_service()
     service.events().delete(calendarId="primary", eventId=event_id).execute()
     return True
+
+
+def get_upcoming_events(within_minutes: int = 60) -> list[dict]:
+    """Get events starting within the next N minutes. Used for pre-event notifications."""
+    service = _get_service()
+    now = datetime.utcnow()
+    time_min = now.isoformat() + "Z"
+    time_max = (now + timedelta(minutes=within_minutes)).isoformat() + "Z"
+
+    result = service.events().list(
+        calendarId="primary",
+        timeMin=time_min,
+        timeMax=time_max,
+        maxResults=50,
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+
+    events = []
+    for item in result.get("items", []):
+        start = item["start"].get("dateTime")
+        if not start:
+            continue  # Skip all-day events
+        events.append({
+            "id": item["id"],
+            "title": item.get("summary", "ללא כותרת"),
+            "start": start,
+            "description": item.get("description", ""),
+            "location": item.get("location", ""),
+        })
+    return events

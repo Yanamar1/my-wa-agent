@@ -6,15 +6,25 @@ Webhook server that receives messages from Green API and responds using AI.
 import asyncio
 import time
 import logging
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 import httpx
+from anthropic import Anthropic
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from config import settings
 from agent import get_response
-from database import init_db, get_pending_reminders, mark_reminder_sent
+from database import (
+    init_db, get_pending_reminders, mark_reminder_sent,
+    was_event_notified, mark_event_notified, cleanup_old_notifications,
+    get_all_users_with_notifications, get_user_settings, get_facts,
+)
+from calendar_api import get_upcoming_events
+
+_ISRAEL_TZ = timezone(timedelta(hours=3))
+_llm_client = Anthropic()
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -52,13 +62,93 @@ async def _reminder_loop():
         await asyncio.sleep(30)
 
 
+def _generate_event_message(event: dict, facts: dict, minutes_before: int) -> str:
+    """Use the LLM to generate a personal, helpful pre-event message."""
+    facts_text = "\n".join([f"- {k}: {v}" for k, v in facts.items()]) if facts else "אין מידע"
+    start_time = event["start"][:16].replace("T", " ")
+    prompt = f"""אתה "עוזר" - עוזר אישי בווצאפ. בעוד {minutes_before} דקות למשתמש מתחיל אירוע ביומן.
+כתוב הודעה אישית, קצרה וחמה בעברית שמזכירה לו את האירוע ונותנת הקשר.
+אם רלוונטי - תן טיפ קצר או הצעה לפעולה (למשל אם יש פגישה - "עוד 10 דקות, מומלץ להתחיל להתארגן").
+
+פרטי האירוע:
+- כותרת: {event['title']}
+- זמן התחלה: {start_time}
+- מיקום: {event.get('location') or 'לא צוין'}
+- תיאור: {event.get('description') or 'אין'}
+
+מה אתה יודע על המשתמש:
+{facts_text}
+
+כתוב רק את ההודעה עצמה, בעברית, בלי הקדמות. אופציונלית התחל עם אימוג'י מתאים."""
+
+    response = _llm_client.messages.create(
+        model=settings.LLM_MODEL,
+        max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text_blocks = [b.text for b in response.content if hasattr(b, "text")]
+    return text_blocks[0] if text_blocks else f"⏰ בעוד {minutes_before} דקות: {event['title']}"
+
+
+async def _calendar_notification_loop():
+    """Background loop that checks the calendar every 60 seconds for upcoming events."""
+    # Wait a bit on startup so the app has time to settle
+    await asyncio.sleep(15)
+    while True:
+        try:
+            phones = get_all_users_with_notifications()
+            for phone in phones:
+                try:
+                    user_settings = get_user_settings(phone)
+                    minutes_before = user_settings["notify_minutes_before"]
+                    # Get events starting in the next `minutes_before + 1` minutes
+                    events = get_upcoming_events(within_minutes=minutes_before + 1)
+                    now = datetime.now(_ISRAEL_TZ)
+                    for event in events:
+                        # Only notify if the event starts in roughly `minutes_before` minutes
+                        event_start = datetime.fromisoformat(event["start"])
+                        # Normalize timezone
+                        if event_start.tzinfo is None:
+                            event_start = event_start.replace(tzinfo=_ISRAEL_TZ)
+                        minutes_until = (event_start - now).total_seconds() / 60
+                        # Send if within the notification window (minutes_before-1 to minutes_before+1)
+                        if minutes_before - 1 <= minutes_until <= minutes_before + 1:
+                            if was_event_notified(event["id"]):
+                                continue
+                            try:
+                                facts = get_facts(phone)
+                                message = _generate_event_message(event, facts, int(minutes_until))
+                            except Exception as e:
+                                logger.error(f"Failed to generate message: {e}")
+                                message = f"⏰ בעוד {int(minutes_until)} דקות: {event['title']}"
+                            chat_id = f"{phone}@c.us"
+                            try:
+                                await send_whatsapp_message(chat_id, message)
+                                mark_event_notified(event["id"])
+                                logger.info(f"Pre-event notification sent to {phone}: {event['title']}")
+                            except Exception as e:
+                                logger.error(f"Failed to send event notification: {e}")
+                except Exception as e:
+                    logger.error(f"Calendar check error for {phone}: {e}")
+            # Cleanup old records occasionally (doesn't matter when exactly)
+            try:
+                cleanup_old_notifications(days=7)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Calendar notification loop error: {e}")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    task = asyncio.create_task(_reminder_loop())
-    logger.info("עוזר is ready (with reminders)")
+    task1 = asyncio.create_task(_reminder_loop())
+    task2 = asyncio.create_task(_calendar_notification_loop())
+    logger.info("עוזר is ready (with reminders and calendar notifications)")
     yield
-    task.cancel()
+    task1.cancel()
+    task2.cancel()
 
 
 app = FastAPI(title="עוזר", lifespan=lifespan)

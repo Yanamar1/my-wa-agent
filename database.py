@@ -81,6 +81,21 @@ def init_db():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Track which calendar events we've already notified about (to avoid duplicates)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notified_events (
+            event_id TEXT PRIMARY KEY,
+            notified_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # User settings (like notification minutes before events)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            phone TEXT PRIMARY KEY,
+            notify_minutes_before INTEGER DEFAULT 10,
+            notifications_enabled INTEGER DEFAULT 1
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -279,6 +294,86 @@ def delete_todo(todo_id: int) -> bool:
     conn.commit()
     conn.close()
     return True
+
+
+def was_event_notified(event_id: str) -> bool:
+    """Check if we've already sent a notification for this calendar event."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT 1 FROM notified_events WHERE event_id = ?",
+        (event_id,),
+    )
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+
+def mark_event_notified(event_id: str):
+    """Record that we sent a notification for a calendar event."""
+    conn = _connect()
+    conn.execute(
+        "INSERT OR IGNORE INTO notified_events (event_id) VALUES (?)",
+        (event_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def cleanup_old_notifications(days: int = 7):
+    """Remove old notification records to keep the table small."""
+    cutoff = (datetime.now(_ISRAEL_OFFSET) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = _connect()
+    conn.execute("DELETE FROM notified_events WHERE notified_at < ?", (cutoff,))
+    conn.commit()
+    conn.close()
+
+
+def get_user_settings(phone: str) -> dict:
+    """Get settings for a user, creating with defaults if not exist."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT notify_minutes_before, notifications_enabled FROM settings WHERE phone = ?",
+        (phone,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.execute("INSERT INTO settings (phone) VALUES (?)", (phone,))
+        conn.commit()
+        result = {"notify_minutes_before": 10, "notifications_enabled": True}
+    else:
+        result = {"notify_minutes_before": row[0], "notifications_enabled": bool(row[1])}
+    conn.close()
+    return result
+
+
+def update_user_settings(phone: str, notify_minutes_before: int = None, notifications_enabled: bool = None):
+    """Update user settings."""
+    conn = _connect()
+    # Ensure row exists
+    conn.execute("INSERT OR IGNORE INTO settings (phone) VALUES (?)", (phone,))
+    if notify_minutes_before is not None:
+        conn.execute(
+            "UPDATE settings SET notify_minutes_before = ? WHERE phone = ?",
+            (notify_minutes_before, phone),
+        )
+    if notifications_enabled is not None:
+        conn.execute(
+            "UPDATE settings SET notifications_enabled = ? WHERE phone = ?",
+            (1 if notifications_enabled else 0, phone),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_all_users_with_notifications() -> list[str]:
+    """Get phones of all users who have calendar notifications enabled."""
+    conn = _connect()
+    cursor = conn.execute(
+        "SELECT phone FROM settings WHERE notifications_enabled = 1"
+    )
+    phones = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return phones
 
 
 def get_history(phone: str, limit: int = 20) -> list[dict]:
